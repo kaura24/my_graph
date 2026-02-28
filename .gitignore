@@ -19,6 +19,10 @@ Thumbs.db
 python/chroma_db/
 python/__pycache__/
 
+# Environment (API keys) — .env.example은 템플릿으로 커밋
+.env
+.env.local
+
 # Local debug artifacts
 openapi_*.json
 upload*_resp.json

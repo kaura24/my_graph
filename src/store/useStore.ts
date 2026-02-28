@@ -10,6 +10,8 @@ export type AppSettings = {
   fontSize: number;
   accentColor: string;
   autoTagFromHashtags: boolean;
+  /** 자동 태그 방식: 로컬(NLP) vs AI(OpenAI) */
+  autoTagMode: "local" | "ai";
 };
 
 export type ImageAsset = {
@@ -29,12 +31,22 @@ const DEFAULT_SETTINGS: AppSettings = {
   fontSize: 13,
   accentColor: "#007acc",
   autoTagFromHashtags: true,
+  autoTagMode: "local",
 };
 
 function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem("my-graph-settings");
-    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const parsed = raw ? JSON.parse(raw) : {};
+    // 마이그레이션: 구 설정 → autoTagMode
+    if ("autoTagFromAI" in parsed && parsed.autoTagFromAI) {
+      parsed.autoTagMode = "ai";
+    } else if ("autoTagFromNLP" in parsed || "autoTagMode" in parsed) {
+      parsed.autoTagMode = parsed.autoTagMode ?? (parsed.autoTagFromNLP !== false ? "local" : "ai");
+    }
+    delete parsed.autoTagFromNLP;
+    delete parsed.autoTagFromAI;
+    return { ...DEFAULT_SETTINGS, ...parsed };
   } catch { /* ignore */ }
   return { ...DEFAULT_SETTINGS };
 }
@@ -63,6 +75,16 @@ type Store = {
 
   // Settings
   settings: AppSettings;
+
+  // AI/Network status (인터넷 연결 시 AI 토글 표시용)
+  aiStatus: {
+    connected: boolean;
+    hasKey: boolean;
+    available: boolean;
+    models: string[];
+    activeModel: string;
+  } | null;
+  loadAIStatus: () => Promise<void>;
 
   // Setters
   setDocs: (docs: DocItem[]) => void;
@@ -120,6 +142,33 @@ export const useStore = create<Store>((set, get) => ({
   expandedFolders: new Set<string>(),
   trashItems: [],
   settings: loadSettings(),
+  aiStatus: null,
+
+  loadAIStatus: async () => {
+    try {
+      const status = await api.ai.getStatus();
+      set({
+        aiStatus:
+          status ?? {
+            connected: false,
+            hasKey: false,
+            available: false,
+            models: [],
+            activeModel: "",
+          },
+      });
+    } catch {
+      set({
+        aiStatus: {
+          connected: false,
+          hasKey: false,
+          available: false,
+          models: [],
+          activeModel: "",
+        },
+      });
+    }
+  },
 
   // Panel
   activePanel: "explorer" as PanelView,
@@ -178,6 +227,9 @@ export const useStore = create<Store>((set, get) => ({
   saveDoc: async (id: string, title: string, content: string) => {
     set({ loading: true, error: null });
     let savedId = id;
+    const { autoTagFromHashtags, autoTagMode } = get().settings;
+    const useNlp = autoTagMode === "local";
+    const useAi = autoTagMode === "ai" && get().aiStatus?.available;
     // 빈 제목으로 저장 시 기존 제목 유지 (백엔드가 title||id로 덮어써 ID가 표시되는 현상 방지)
     const effectiveTitle =
       title.trim() ||
@@ -187,11 +239,13 @@ export const useStore = create<Store>((set, get) => ({
       const newId = await api.docs.save(id, {
         title: effectiveTitle,
         content,
-        autoTag: get().settings.autoTagFromHashtags,
+        autoTag: autoTagFromHashtags,
+        autoTagNlp: useNlp,
+        autoTagAi: useAi,
       });
       savedId = newId;
       await get().loadDocs();
-      if (get().settings.autoTagFromHashtags) await get().loadAllTags();
+      if (autoTagFromHashtags || useNlp || useAi) await get().loadAllTags();
       if (newId !== id) await get().loadDoc(newId);
       else {
         if (get().current?.id === id)

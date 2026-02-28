@@ -3,76 +3,95 @@
  * Python FastAPI REST 호출 어댑터.
  */
 
-const DEFAULT_BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
+const CANONICAL_BASE = "http://127.0.0.1:8000";
+const ENV_BASE = import.meta.env.VITE_API_URL as string | undefined;
 const FALLBACK_BASE = "http://127.0.0.1:8011";
-const API_BASE_CANDIDATES = Array.from(new Set([DEFAULT_BASE, FALLBACK_BASE]));
+const API_BASE_CANDIDATES = Array.from(
+    new Set([CANONICAL_BASE, ...(ENV_BASE ? [ENV_BASE] : []), FALLBACK_BASE])
+);
 const SESSION_BASE_KEY = "my_graph_api_base";
 
-let resolvedBasePromise: Promise<string> | null = null;
+let resolvedBase: string | null = null;
 
-async function hasRequiredRoutes(base: string): Promise<boolean> {
+async function isAlive(base: string, timeoutMs = 3000): Promise<boolean> {
     try {
-        const res = await fetch(`${base}/openapi.json`);
-        if (!res.ok) return false;
-        const json = await res.json();
-        const paths = json?.paths ?? {};
-        return Boolean(
-            paths["/api/docs"] &&
-            paths["/api/images"] &&
-            paths["/api/files"] &&
-            paths["/api/system/open-path"] &&
-            paths["/api/system/open-external"]
-        );
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+        const res = await fetch(`${base}/api/docs`, { signal: ctrl.signal });
+        clearTimeout(timer);
+        return res.ok;
     } catch {
         return false;
     }
 }
 
 async function resolveBase(): Promise<string> {
-    // 앱(브라우저 탭/pywebview 세션) 생명주기 동안 동일 백엔드에 고정
     if (typeof window !== "undefined") {
         const pinned = sessionStorage.getItem(SESSION_BASE_KEY);
-        if (pinned) return pinned;
+        if (pinned && (await isAlive(pinned))) {
+            resolvedBase = pinned;
+            return pinned;
+        }
+        if (pinned) sessionStorage.removeItem(SESSION_BASE_KEY);
     }
 
     for (const candidate of API_BASE_CANDIDATES) {
-        if (await hasRequiredRoutes(candidate)) {
+        if (await isAlive(candidate)) {
+            resolvedBase = candidate;
             if (typeof window !== "undefined") {
                 sessionStorage.setItem(SESSION_BASE_KEY, candidate);
             }
             return candidate;
         }
     }
-    // 어떤 이유로도 탐지 실패하면 기존 기본값 유지
-    if (typeof window !== "undefined") {
-        sessionStorage.setItem(SESSION_BASE_KEY, DEFAULT_BASE);
-    }
-    return DEFAULT_BASE;
+    resolvedBase = CANONICAL_BASE;
+    return CANONICAL_BASE;
 }
 
+let resolvePromise: Promise<string> | null = null;
+
 async function getBase(): Promise<string> {
-    if (!resolvedBasePromise) {
-        resolvedBasePromise = resolveBase();
-    }
-    return resolvedBasePromise;
+    if (resolvedBase) return resolvedBase;
+    if (!resolvePromise) resolvePromise = resolveBase();
+    return resolvePromise;
 }
+
+export function invalidateBase() {
+    resolvedBase = null;
+    resolvePromise = null;
+    if (typeof window !== "undefined") {
+        sessionStorage.removeItem(SESSION_BASE_KEY);
+    }
+}
+
+export { isAlive, getBase, CANONICAL_BASE };
 
 async function req<T>(
     method: string,
     path: string,
-    body?: unknown
+    body?: unknown,
+    _retry = 0,
 ): Promise<T | undefined> {
     const base = await getBase();
-    const res = await fetch(`${base}${path}`, {
-        method,
-        headers: body !== undefined ? { "Content-Type": "application/json" } : {},
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) {
-        throw new Error(`API error ${res.status}: ${path}`);
+    try {
+        const res = await fetch(`${base}${path}`, {
+            method,
+            headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+            body: body !== undefined ? JSON.stringify(body) : undefined,
+        });
+        if (!res.ok) {
+            throw new Error(`API error ${res.status}: ${path}`);
+        }
+        const text = await res.text();
+        return text ? (JSON.parse(text) as T) : undefined;
+    } catch (err) {
+        if (_retry < 2 && err instanceof TypeError) {
+            invalidateBase();
+            await new Promise((r) => setTimeout(r, 1000 * (_retry + 1)));
+            return req<T>(method, path, body, _retry + 1);
+        }
+        throw err;
     }
-    const text = await res.text();
-    return text ? (JSON.parse(text) as T) : undefined;
 }
 
 // ─── 문서 ───────────────────────────────────────
@@ -94,12 +113,14 @@ export const docs = {
             throw e;
         }),
 
-    save: async (id: string, payload: { title?: string; content?: string; autoTag?: boolean }) => {
+    save: async (id: string, payload: { title?: string; content?: string; autoTag?: boolean; autoTagNlp?: boolean; autoTagAi?: boolean }) => {
         const qs = id ? `?id=${encodeURIComponent(id)}` : "";
         const result = await req<{ id: string }>("POST", `/api/docs${qs}`, {
             title: payload.title ?? "",
             content: payload.content ?? "",
             auto_tag: payload.autoTag ?? false,
+            auto_tag_nlp: payload.autoTagNlp ?? false,
+            auto_tag_ai: payload.autoTagAi ?? false,
         });
         return result!.id;
     },
@@ -228,6 +249,68 @@ export const backup = {
     },
 };
 
+// ─── 네트워크 / AI 상태 ───────────────────────────
+export const network = {
+    getStatus: () => req<{ connected: boolean }>("GET", "/api/network/status"),
+};
+
+export const ai = {
+    getStatus: () =>
+        req<{
+            connected: boolean;
+            hasKey: boolean;
+            available: boolean;
+            models: string[];
+            activeModel: string;
+        }>("GET", "/api/ai/status"),
+};
+
+// ─── 그래프(거리 기반 엣지) ───────────────────────
+export const graph = {
+    getEdges: (options?: { edgeType?: string; minWeight?: number; limit?: number }) => {
+        const qs = new URLSearchParams();
+        if (options?.edgeType) qs.set("edge_type", options.edgeType);
+        if (options?.minWeight !== undefined) qs.set("min_weight", String(options.minWeight));
+        if (options?.limit !== undefined) qs.set("limit", String(options.limit));
+        const q = qs.toString();
+        return req<{
+            edgeType: string;
+            count: number;
+            edges: Array<{
+                sourceDocId: string;
+                targetDocId: string;
+                edgeType: string;
+                weight: number;
+                distance: number;
+                evidence: Array<
+                    | { tagA: string; tagB: string; similarity: number }
+                    | { sharedTags: string[] }
+                >;
+            }>;
+        }>("GET", `/api/graph/edges${q ? `?${q}` : ""}`);
+    },
+    rebuildSemantic: (options?: { engine?: string; topN?: number; kPerNode?: number; minDocs?: number }) => {
+        const qs = new URLSearchParams();
+        if (options?.engine) qs.set("engine", options.engine);
+        if (options?.topN !== undefined) qs.set("top_n", String(options.topN));
+        if (options?.kPerNode !== undefined) qs.set("k_per_node", String(options.kPerNode));
+        if (options?.minDocs !== undefined) qs.set("min_docs", String(options.minDocs));
+        const q = qs.toString();
+        return req<{
+            ok?: boolean;
+            context?: string;
+            status: string;
+            reason?: string;
+            engine?: string;
+            tagCount?: number;
+            edgeCount?: number;
+            threshold?: number;
+            topN?: number;
+            kPerNode?: number;
+        }>("POST", `/api/graph/rebuild-semantic${q ? `?${q}` : ""}`);
+    },
+};
+
 // ─── 시스템 ───────────────────────────────────────
 export const system = {
     openPath: (path: string) => req<void>("POST", "/api/system/open-path", { path }),
@@ -243,7 +326,22 @@ export const urlMeta = {
         ),
 };
 
+// ─── URL 분석 (스크래핑 + AI 요약) ───────────────────
+export const urlAnalyze = {
+    analyze: (url: string) =>
+        req<{
+            url: string;
+            meta: { title: string; description: string; image: string; url: string };
+            title: string;
+            summary: string;
+            tags: string[];
+            image: string;
+            folder: string;
+            folderCreated: boolean;
+        }>("POST", "/api/url/analyze", { url }),
+};
+
 // ─── window.api 호환 래퍼 ──
-const api = { docs, tags, folders, trash, images, files, backup, system, urlMeta };
+const api = { docs, tags, folders, trash, images, files, backup, system, urlMeta, urlAnalyze, network, ai, graph };
 export default api;
 

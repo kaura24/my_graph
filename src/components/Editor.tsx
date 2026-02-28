@@ -8,13 +8,49 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
-import { FileImage, FileText, Paperclip } from "lucide-react";
+import { FileImage, FileText, Paperclip, ChevronUp, ChevronDown } from "lucide-react";
 import { feedback } from "../utils/feedback";
+import MarkdownIt from "markdown-it";
+import TurndownService from "turndown";
+
+const mdParser = new MarkdownIt({ html: true, linkify: true, typographer: false });
+const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
+
+type EditorMode = "normal" | "markdown";
+
+function adjustHeadingLevel(
+  text: string,
+  cursorPos: number,
+  direction: "up" | "down",
+): { text: string; newPos: number } {
+  const lines = text.split("\n");
+  let charCount = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const lineEnd = charCount + lines[i].length;
+    if (cursorPos >= charCount && cursorPos <= lineEnd) {
+      const match = lines[i].match(/^(#{1,6}) /);
+      if (!match) break;
+      const level = match[1].length;
+      if (direction === "up" && level > 1) {
+        lines[i] = lines[i].substring(1);
+        return { text: lines.join("\n"), newPos: cursorPos - 1 };
+      }
+      if (direction === "down" && level < 6) {
+        lines[i] = "#" + lines[i];
+        return { text: lines.join("\n"), newPos: cursorPos + 1 };
+      }
+      break;
+    }
+    charCount = lineEnd + 1;
+  }
+  return { text, newPos: cursorPos };
+}
 
 interface EditorProps {
   onCreateDoc?: () => Promise<void>;
 }
 
+const TAG_MAX = 8;
 const OBJECT_FILE_EXTENSIONS = new Set(["xml", "html", "htm"]);
 const OBJECT_MIME_TYPES = new Set(["application/xml", "text/xml", "text/html"]);
 const IMAGE_FILE_EXTENSIONS = new Set([
@@ -332,10 +368,18 @@ export function Editor({ onCreateDoc }: EditorProps) {
   const [tagInput, setTagInput] = useState("");
   const [canDeleteSelectedImage, setCanDeleteSelectedImage] = useState(false);
   const [imageCtxMenu, setImageCtxMenu] = useState<{ x: number; y: number; pos: number } | null>(null);
+  const [editorMode, setEditorMode] = useState<EditorMode>("normal");
+  const [mdContent, setMdContent] = useState("");
+  const editorModeRef = useRef<EditorMode>("normal");
+  const mdContentRef = useRef("");
+  // ref 동기화 (클로저 문제 방지)
+  editorModeRef.current = editorMode;
+  mdContentRef.current = mdContent;
   const titleRef = useRef("");
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageMenuRef = useRef<HTMLDivElement | null>(null);
+  const mdTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     titleRef.current = title;
@@ -709,26 +753,42 @@ export function Editor({ onCreateDoc }: EditorProps) {
 
   useEffect(() => {
     if (current) {
-      // 문서 전환 시점에만 제목/본문을 동기화해 사용자의 제목 입력이 중간에 덮어쓰이지 않도록 함.
       setTitle(current.title);
-      if (editor && editor.getHTML() !== current.content) {
-        editor.commands.setContent(current.content, false);
+      // 마크다운 마커 감지: <!--markdown--> 으로 시작하면 마크다운 모드로 자동 전환
+      const isMdDoc = current.content.trimStart().startsWith("<!--markdown-->");
+      if (isMdDoc) {
+        // 마커를 제거한 실제 콘텐츠를 마크다운 textarea에 세팅
+        const rawMd = current.content.replace(/^<!--markdown-->[\r\n]?/, "");
+        setMdContent(rawMd);
+        setEditorMode("markdown");
+      } else {
+        setEditorMode("normal");
+        if (editor && editor.getHTML() !== current.content) {
+          editor.commands.setContent(current.content, false);
+        }
       }
     } else {
       setTitle("");
       editor?.commands.setContent("", false);
+      setEditorMode("normal");
+      setMdContent("");
       setShowImageLibrary(false);
       setImageLibrary([]);
     }
     return () => {
-      if (current && editor) {
-        const html = editor.getHTML();
+      if (current) {
         const docTitle = titleRef.current;
-        const contentChanged = html !== current.content && html.trim() !== "" && html !== "<p></p>";
+        let saveContent: string;
+        if (editorModeRef.current === "markdown") {
+          saveContent = `<!--markdown-->\n${mdContentRef.current}`;
+        } else {
+          saveContent = editor ? editor.getHTML() : current.content;
+        }
+        const contentChanged = saveContent !== current.content && saveContent.trim() !== "" && saveContent !== "<p></p>";
         const titleChanged = docTitle.trim() !== (current.title || "").trim();
         if (contentChanged || titleChanged) {
           const docId = current.id;
-          void saveDoc(docId, docTitle, html).catch((e) =>
+          void saveDoc(docId, docTitle, saveContent).catch((e) =>
             console.warn("문서 전환 시 자동 저장 실패:", e)
           );
         }
@@ -766,22 +826,55 @@ export function Editor({ onCreateDoc }: EditorProps) {
 
   const tags = (current && docTags[current.id]) || [];
 
+  const switchToMarkdown = useCallback(() => {
+    if (!editor) return;
+    const html = editor.getHTML();
+    const md = turndown.turndown(html);
+    setMdContent(md);
+    setEditorMode("markdown");
+  }, [editor]);
+
+  const switchToNormal = useCallback(() => {
+    const html = mdParser.render(mdContent);
+    editor?.commands.setContent(html, false);
+    setEditorMode("normal");
+  }, [editor, mdContent]);
+
+  const handleTreeAdjust = useCallback((direction: "up" | "down") => {
+    const ta = mdTextareaRef.current;
+    if (!ta) return;
+    const pos = ta.selectionStart ?? 0;
+    const { text, newPos } = adjustHeadingLevel(mdContent, pos, direction);
+    setMdContent(text);
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.setSelectionRange(newPos, newPos);
+    });
+  }, [mdContent]);
+
   const handleSave = useCallback(async () => {
-    if (!current || !editor) return;
+    if (!current) return;
     setSaving(true);
     try {
-      let content = editor.getHTML();
-      const stripped = stripLegacyUploadPlaceholders(content);
-      if (stripped !== content) {
-        content = stripped;
-        editor.commands.setContent(content, false);
-      }
-      if (DEBUG_IMAGE_UPLOAD && /src="data:image\//.test(content)) {
-        console.log("[ImageUpload] 저장 버튼 클릭 → base64 이미지 있음, 업로드 시도");
-      }
-      content = await uploadEmbeddedBase64Images(content, uploadImage, current.id);
-      if (content !== editor.getHTML()) {
-        editor.commands.setContent(content, false);
+      let content: string;
+      if (editorMode === "markdown") {
+        // 마크다운 문서는 마커와 함께 원본 마크다운 그대로 저장 (모드 유지를 위해)
+        content = `<!--markdown-->\n${mdContent}`;
+      } else {
+        if (!editor) return;
+        content = editor.getHTML();
+        const stripped = stripLegacyUploadPlaceholders(content);
+        if (stripped !== content) {
+          content = stripped;
+          editor.commands.setContent(content, false);
+        }
+        if (DEBUG_IMAGE_UPLOAD && /src="data:image\//.test(content)) {
+          console.log("[ImageUpload] 저장 버튼 클릭 → base64 이미지 있음, 업로드 시도");
+        }
+        content = await uploadEmbeddedBase64Images(content, uploadImage, current.id);
+        if (content !== editor.getHTML()) {
+          editor.commands.setContent(content, false);
+        }
       }
       await saveDoc(current.id, title, content);
       feedback.success("저장되었습니다.");
@@ -791,12 +884,16 @@ export function Editor({ onCreateDoc }: EditorProps) {
     } finally {
       setSaving(false);
     }
-  }, [current, title, editor, saveDoc, uploadImage]);
+  }, [current, title, editor, editorMode, mdContent, saveDoc, uploadImage]);
 
   const handleAddTag = () => {
     const t = tagInput.trim();
     if (!t || !current) return;
     if (tags.includes(t)) { setTagInput(""); return; }
+    if (tags.length >= TAG_MAX) {
+      feedback.info(`태그는 최대 ${TAG_MAX}개까지 추가할 수 있습니다.`);
+      return;
+    }
     saveTagsForDoc(current.id, [...tags, t]);
     setTagInput("");
   };
@@ -861,48 +958,94 @@ export function Editor({ onCreateDoc }: EditorProps) {
           placeholder="제목"
         />
         <div className="editor-actions">
-          <div className="editor-image-menu" ref={imageMenuRef}>
+          {/* 모드 전환 토글 */}
+          <div className="editor-mode-toggle">
             <button
-              className="btn"
-              onClick={openImagePicker}
-              disabled={uploadingImage}
-              title="파일에서 이미지 불러오기"
+              className={`editor-mode-toggle__btn${editorMode === "normal" ? " active" : ""}`}
+              onClick={() => editorMode === "markdown" && switchToNormal()}
+              title="일반 편집 모드"
             >
-              <FileImage size={14} />
-              {uploadingImage ? "업로드 중…" : "이미지 불러오기"}
+              일반
             </button>
             <button
-              className="btn btn--dropdown"
-              onClick={() => setShowImageMenu((v) => !v)}
-              disabled={uploadingImage}
-              title="더보기"
-              aria-label="이미지 메뉴"
+              className={`editor-mode-toggle__btn${editorMode === "markdown" ? " active" : ""}`}
+              onClick={() => editorMode === "normal" && switchToMarkdown()}
+              title="마크다운 소스 편집 모드"
             >
-              ▼
+              마크다운
             </button>
-            {showImageMenu && (
-              <div className="context-menu editor-image-menu__panel">
-                <button className="context-menu__item" onClick={handleInsertFromClipboard}>
-                  클립보드 이미지 붙여넣기
-                </button>
-                <button className="context-menu__item" onClick={() => void handleOpenImageLibrary()}>
-                  이미지 보관함에서 삽입
-                </button>
-              </div>
-            )}
           </div>
-          <button
-            className="btn"
-            onClick={() => void handleDeleteSelectedImage()}
-            disabled={!canDeleteSelectedImage}
-            title="선택한 이미지 삭제"
-          >
-            이미지 삭제
-          </button>
-          <button className="btn" onClick={openFilePicker} disabled={uploadingFile}>
-            <Paperclip size={14} />
-            {uploadingFile ? "첨부 중…" : "파일"}
-          </button>
+
+          {/* 트리업/다운 (마크다운 모드 전용) */}
+          {editorMode === "markdown" && (
+            <>
+              <button
+                className="btn editor-tree-btn"
+                onClick={() => handleTreeAdjust("up")}
+                title="트리업 — 제목 레벨 승격 (## → #)"
+              >
+                <ChevronUp size={14} />
+                트리업
+              </button>
+              <button
+                className="btn editor-tree-btn"
+                onClick={() => handleTreeAdjust("down")}
+                title="트리다운 — 제목 레벨 강등 (# → ##)"
+              >
+                <ChevronDown size={14} />
+                트리다운
+              </button>
+            </>
+          )}
+
+          {/* 이미지/파일 (일반 모드 전용) */}
+          {editorMode === "normal" && (
+            <>
+              <div className="editor-image-menu" ref={imageMenuRef}>
+                <button
+                  className="btn"
+                  onClick={openImagePicker}
+                  disabled={uploadingImage}
+                  title="파일에서 이미지 불러오기"
+                >
+                  <FileImage size={14} />
+                  {uploadingImage ? "업로드 중…" : "이미지 불러오기"}
+                </button>
+                <button
+                  className="btn btn--dropdown"
+                  onClick={() => setShowImageMenu((v) => !v)}
+                  disabled={uploadingImage}
+                  title="더보기"
+                  aria-label="이미지 메뉴"
+                >
+                  ▼
+                </button>
+                {showImageMenu && (
+                  <div className="context-menu editor-image-menu__panel">
+                    <button className="context-menu__item" onClick={handleInsertFromClipboard}>
+                      클립보드 이미지 붙여넣기
+                    </button>
+                    <button className="context-menu__item" onClick={() => void handleOpenImageLibrary()}>
+                      이미지 보관함에서 삽입
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button
+                className="btn"
+                onClick={() => void handleDeleteSelectedImage()}
+                disabled={!canDeleteSelectedImage}
+                title="선택한 이미지 삭제"
+              >
+                이미지 삭제
+              </button>
+              <button className="btn" onClick={openFilePicker} disabled={uploadingFile}>
+                <Paperclip size={14} />
+                {uploadingFile ? "첨부 중…" : "파일"}
+              </button>
+            </>
+          )}
+
           <button className="btn btn--primary" onClick={handleSave} disabled={saving}>
             {saving ? "저장 중…" : "저장"}
           </button>
@@ -974,7 +1117,18 @@ export function Editor({ onCreateDoc }: EditorProps) {
           style={{ display: "none" }}
           onChange={handleFilePicked}
         />
-        <EditorContent editor={editor} />
+        {editorMode === "normal" ? (
+          <EditorContent editor={editor} />
+        ) : (
+          <textarea
+            ref={mdTextareaRef}
+            className="editor-markdown-textarea"
+            value={mdContent}
+            onChange={(e) => setMdContent(e.target.value)}
+            spellCheck={false}
+            placeholder="# 제목&#10;&#10;내용을 마크다운으로 입력하세요…"
+          />
+        )}
       </div>
 
       {imageCtxMenu && (

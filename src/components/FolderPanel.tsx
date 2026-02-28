@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, type ChangeEvent } from "react";
-import { FilePlus2, Folder, FolderOpen, FolderPlus, Settings, Download, Upload, Trash2 } from "lucide-react";
+import { createPortal } from "react-dom";
+import { FilePlus2, Folder, FolderOpen, FolderPlus, Settings, Tag, Download, Upload, Trash2 } from "lucide-react";
 import { useStore } from "../store/useStore";
 import api from "../adapters/apiAdapter";
 import { feedback } from "../utils/feedback";
@@ -7,9 +8,10 @@ import { feedback } from "../utils/feedback";
 interface FolderPanelProps {
     onCreateDoc: () => Promise<void>;
     onOpenSettings: () => void;
+    onOpenTagSettings?: () => void;
 }
 
-export function FolderPanel({ onCreateDoc, onOpenSettings }: FolderPanelProps) {
+export function FolderPanel({ onCreateDoc, onOpenSettings, onOpenTagSettings }: FolderPanelProps) {
     const {
         folders, selectedFolder, docs, trashItems,
         loadFolders, loadTrash, setSelectedFolder, createFolder, deleteFolder, renameFolder,
@@ -207,28 +209,30 @@ export function FolderPanel({ onCreateDoc, onOpenSettings }: FolderPanelProps) {
                 )}
             </div>
 
-            {/* Context menu */}
-            {ctxMenu && (
-                <div className="context-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
-                    <button
-                        className="context-menu__item"
-                        onClick={() => {
-                            setEditingFolder(ctxMenu.folder);
-                            setEditName(ctxMenu.folder);
-                            setCtxMenu(null);
-                        }}
-                    >
-                        이름 변경
-                    </button>
-                    <div className="context-menu__separator" />
-                    <button
-                        className="context-menu__item"
-                        onClick={() => { handleDelete(ctxMenu.folder); setCtxMenu(null); }}
-                    >
-                        삭제
-                    </button>
-                </div>
-            )}
+            {/* Context menu (portal to body so it is not clipped by overflow) */}
+            {ctxMenu &&
+                createPortal(
+                    <div className="context-menu context-menu--portal" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+                        <button
+                            className="context-menu__item"
+                            onClick={() => {
+                                setEditingFolder(ctxMenu.folder);
+                                setEditName(ctxMenu.folder);
+                                setCtxMenu(null);
+                            }}
+                        >
+                            이름 변경
+                        </button>
+                        <div className="context-menu__separator" />
+                        <button
+                            className="context-menu__item"
+                            onClick={() => { handleDelete(ctxMenu.folder); setCtxMenu(null); }}
+                        >
+                            삭제
+                        </button>
+                    </div>,
+                    document.body
+                )}
 
             <div className="side-panel__footer">
                 <button className="side-panel__footer-btn" onClick={handleBackup} title="백업">
@@ -239,6 +243,12 @@ export function FolderPanel({ onCreateDoc, onOpenSettings }: FolderPanelProps) {
                     <Upload size={14} />
                     복구
                 </button>
+                {onOpenTagSettings && (
+                    <button className="side-panel__footer-btn" onClick={onOpenTagSettings} title="태그 설정">
+                        <Tag size={14} />
+                        태그 설정
+                    </button>
+                )}
                 <button className="side-panel__footer-btn" onClick={onOpenSettings} title="설정">
                     <Settings size={14} />
                     설정

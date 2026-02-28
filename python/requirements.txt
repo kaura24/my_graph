@@ -8,5 +8,9 @@ torch
 networkx
 pywebview
 httpx
+python-dotenv
+openai
 pytest
 pytest-asyncio
+kiwipiepy
+scikit-learn

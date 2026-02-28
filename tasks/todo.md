@@ -58,6 +58,8 @@
 - [x] extract_hashtags (doc_service.py)
 - [x] 저장 시 auto_tag 옵션으로 #해시태그 자동 추출
 - [x] 설정: autoTagFromHashtags 토글
+- [x] extract_keywords_nlp (kiwipiepy + scikit-learn) — 명사/고유명사 자동 추출
+- [x] 설정: autoTagFromNLP 토글
 
 ## URL 링크 프리뷰 (2026-02-28)
 - [x] GET /api/url-meta (og:title, og:description, og:image)
@@ -70,6 +72,7 @@
 ### 우선순위 높음
 - [ ] 로컬 LLM (Ollama 등) API 연동 — 문서 자동 요약/키워드 추출
 - [ ] ChromaDB + Sentence-Transformers 시맨틱 검색 고도화
+- [x] NLP 자동 태그 (kiwipiepy + scikit-learn) — 명사 추출 완료
 
 ### 우선순위 중간
 - [ ] 문서 내보내기/가져오기 (Markdown, HTML, Excel 일괄)
@@ -78,3 +81,34 @@
 ### 우선순위 낮음
 - [ ] 에디터 문자 수 제한 옵션 (CharacterCount)
 - [ ] 휴지통 자동 비우기 (N일 후)
+
+## 자동 태그 품질 개선 (2026-02-28)
+- [x] 자동 태그 기본 상한을 8개로 조정 (AI/NLP)
+- [x] 로컬(NLP) 태그 중요도 스코어링 적용 (빈도 + 품사 가중치 + 최소 등장 횟수)
+- [x] 저장 시 자동 추출 태그 dedupe 후 상위 8개만 반영
+
+## 태그 컨텍스트 임베딩 거리 분석 (2026-02-28)
+- [x] 태그 centroid 계산 로직 추가 (문서 본문 임베딩 평균)
+- [x] 태그 유사도 분석 API 추가 (`GET /api/tags/similarity`)
+- [x] 결과 포맷에 similarity/distance/docCount 포함
+
+### 검토/결과
+- 태그별로 해당 태그가 달린 문서들의 본문 임베딩을 평균해 centroid를 생성
+- 요청 태그 대비 다른 태그들의 코사인 유사도/거리(1-similarity)를 계산해 상위 top_k 반환
+
+## 거리 기반 문서 그래프 (2026-02-28)
+- [x] DB 포맷 추가 (`tag_embeddings`, `graph_edges`)
+- [x] 엣지 생성 규칙 구현 (top-n 평균, threshold 0.72, 노드당 k=4)
+- [x] 갱신 트리거 반영 (문서 저장/삭제, 태그 변경, 휴지통 복원)
+- [x] 그래프 조회/재빌드 API 추가 (`GET /api/graph/edges`, `POST /api/graph/rebuild-semantic`)
+- [x] GraphView에서 semantic edge 우선 렌더 + 실패 시 공통 태그 폴백
+
+## 세션 마감 문서화 (2026-02-28)
+- [x] 오늘 기능 변경사항 최종 정리 (문서 타입 선택 생성, URL 분류 20개 정책)
+- [x] 운영 규칙/우선순위/fallback 정책을 AGENT_CONTEXT에 반영
+- [x] 마감 체크리스트 기록 (재시작/수동 검증 항목 포함)
+
+### 검토/결과
+- 새 문서 생성에서 일반/마크다운 타입을 분리해 생성할 수 있도록 정리 완료.
+- URL 자동 분류는 AI·코드 세부 20개를 표준 체계로 사용하고, 일반 10개는 fallback 분류용으로 문서화 완료.
+- 다음 세션에서 동일 컨텍스트를 즉시 이어갈 수 있도록 정책/우선순위를 명시함.

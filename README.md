@@ -134,6 +134,16 @@ My_graph/
 | `MY_GRAPH_DATA_DIR` | `~/.config/my-graph/my-graph-data` | 문서/메타 저장 경로 |
 | `MY_GRAPH_DB_PATH` | `~/.config/my-graph/metadata.db` | SQLite 경로 |
 | `VITE_API_URL` | `http://127.0.0.1:8000` | 백엔드 URL |
+| `OPENAI_API_KEY` | (없음) | AI 태그 추출용 OpenAI API 키 (`.env`에 설정) |
+
+### .env 설정 (AI 기능)
+
+프로젝트 루트에 `.env` 파일을 만들고 OpenAI API 키를 넣으세요:
+
+```bash
+cp .env.example .env
+# .env 편집: OPENAI_API_KEY=sk-your-key-here
+```
 
 ---
 
@@ -155,6 +165,9 @@ My_graph/
 - 시스템 열기
   - `POST /api/system/open-path` (탐색기 열기)
   - `POST /api/system/open-external` (기본 브라우저 열기)
+- 네트워크 / AI 상태
+  - `GET /api/network/status` (인터넷 연결 여부)
+  - `GET /api/ai/status` (인터넷 + API 키로 AI 사용 가능 여부)
 
 ---
 

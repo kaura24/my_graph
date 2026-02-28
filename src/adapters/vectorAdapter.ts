@@ -21,7 +21,7 @@ export async function upsertDocument(
 export async function queryCollection(
     collection: string,
     query: string,
-    top_k = 5
+    top_k = 8
 ) {
     const res = await axios.post(
         `${BASE}/query`,

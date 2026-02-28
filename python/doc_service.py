@@ -6,9 +6,11 @@ import json
 import re
 import os
 import uuid
+import math
 from pathlib import Path
 from typing import Optional
 from datetime import datetime, timezone
+from collections import Counter, defaultdict
 
 # 기본 데이터 디렉토리 (환경변수로 오버라이드 가능)
 _DEFAULT_DATA_DIR = os.path.join(
@@ -232,6 +234,94 @@ def extract_hashtags(html_content: str) -> list[str]:
             seen.add(tag.lower())
             result.append(tag)
     return result
+
+
+# kiwipiepy Kiwi 인스턴스 (lazy init)
+_kiwi = None
+
+
+def _get_kiwi():
+    """kiwipiepy Kiwi 싱글톤 (첫 호출 시 로드)"""
+    global _kiwi
+    if _kiwi is None:
+        try:
+            from kiwipiepy import Kiwi
+            _kiwi = Kiwi()
+        except ImportError:
+            _kiwi = False  # 설치 안 됨
+    return _kiwi if _kiwi else None
+
+
+# NLP 추출 시 제외할 불용어 (짧거나 의미 없는 명사)
+_NLP_STOPWORDS = frozenset({
+    "것", "수", "등", "때", "점", "중", "간", "들", "및", "등등",
+    "이", "가", "을", "를", "의", "에", "와", "과", "로", "으로",
+    "the", "a", "an", "of", "in", "on", "at", "to", "for",
+})
+_NLP_MIN_COUNT = 2
+_NLP_POS_WEIGHTS = {
+    "NNP": 1.6,  # 고유명사
+    "NNG": 1.0,  # 일반명사
+    "SL": 1.2,   # 외국어
+    "NNB": 0.7,  # 의존명사 (노이즈 가능성 높음)
+}
+
+
+def extract_keywords_nlp(html_content: str, top_k: int = 8) -> list[str]:
+    """
+    본문에서 kiwipiepy 형태소 분석으로 명사/고유명사 추출 후 빈도 기반 상위 키워드를 태그로 반환.
+    HTML 태그 제거 후 순수 텍스트만 분석.
+    """
+    if not html_content:
+        return []
+    kiwi = _get_kiwi()
+    if kiwi is None:
+        return []
+    text = re.sub(r"<[^>]+>", " ", html_content)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) < 3:
+        return []
+    try:
+        tokens = kiwi.tokenize(text, normalize_coda=True)
+    except Exception:
+        return []
+    noun_tags = ("NNG", "NNP", "NNB", "SL")  # 일반명사, 고유명사, 의존명사, 외국어
+    counter: Counter[str] = Counter()
+    pos_weight_sum: defaultdict[str, float] = defaultdict(float)
+    first_pos: dict[str, int] = {}
+    display_form: dict[str, str] = {}
+    for idx, t in enumerate(tokens):
+        if t.tag in noun_tags:
+            form = t.form.strip()
+            if len(form) >= 2 and form.lower() not in _NLP_STOPWORDS:
+                key = form.lower()
+                counter[key] += 1
+                pos_weight_sum[key] += _NLP_POS_WEIGHTS.get(t.tag, 1.0)
+                if key not in first_pos:
+                    first_pos[key] = idx
+                    display_form[key] = form
+
+    if not counter:
+        return []
+
+    # 최소 등장 횟수 필터로 노이즈 축소. 후보가 너무 적으면 전체 후보 사용.
+    candidates = [k for k, c in counter.items() if c >= _NLP_MIN_COUNT]
+    if not candidates:
+        candidates = list(counter.keys())
+
+    token_len = max(len(tokens), 1)
+    scored: list[tuple[float, int, int, str]] = []
+    for key in candidates:
+        count = counter[key]
+        tf = 1.0 + math.log(count)
+        pos_weight = pos_weight_sum[key] / count
+        # 문서 앞부분 등장 키워드를 약하게 우대 (제목/초반 문맥 반영)
+        position_boost = 1.1 if first_pos[key] < int(token_len * 0.35) else 1.0
+        score = tf * pos_weight * position_boost
+        scored.append((score, count, first_pos[key], key))
+
+    scored.sort(key=lambda x: (-x[0], -x[1], x[2], x[3]))
+    return [display_form[key] for _, _, _, key in scored[:top_k]]
 
 
 def get_tags_for_doc(doc_id: str) -> list[str]:

@@ -1,8 +1,13 @@
+import { useEffect } from "react";
 import { useStore } from "../store/useStore";
 import type { AppSettings } from "../store/useStore";
 
 export function SettingsPanel() {
-    const { settings, updateSettings } = useStore();
+    const { settings, updateSettings, aiStatus, loadAIStatus } = useStore();
+
+    useEffect(() => {
+        void loadAIStatus();
+    }, [loadAIStatus]);
 
     const themes: { value: AppSettings["theme"]; label: string }[] = [
         { value: "dark", label: "Dark" },
@@ -51,6 +56,28 @@ export function SettingsPanel() {
                     </div>
                 </div>
 
+                {/* AI 연결 상태 */}
+                <div className="settings-group">
+                    <div className="settings-group__title">AI 연결 상태</div>
+                    <div className="settings-row" style={{ alignItems: "center", gap: 8 }}>
+                        <span
+                            className={`ai-status-dot ${aiStatus?.available ? "connected" : "disconnected"}`}
+                            title={aiStatus?.available ? `연결됨 (${aiStatus.activeModel})` : "연결 안 됨"}
+                        />
+                        <span className="settings-row__label">
+                            {aiStatus?.available
+                                ? `OpenAI 연결됨 (${aiStatus.activeModel})`
+                                : aiStatus?.hasKey
+                                  ? aiStatus.activeModel
+                                    ? `연결 실패 (모델: ${aiStatus.activeModel})`
+                                    : "연결 실패"
+                                  : aiStatus === null
+                                    ? "확인 중…"
+                                    : "API 키 미설정"}
+                        </span>
+                    </div>
+                </div>
+
                 {/* Accent color */}
                 <div className="settings-group">
                     <div className="settings-group__title">강조 색상</div>
@@ -61,24 +88,6 @@ export function SettingsPanel() {
                             value={settings.accentColor}
                             onChange={(e) => updateSettings({ accentColor: e.target.value })}
                         />
-                    </div>
-                </div>
-
-                {/* 자동 태그 */}
-                <div className="settings-group">
-                    <div className="settings-group__title">자동 태그</div>
-                    <div
-                        className="settings-row"
-                        style={{ cursor: "pointer" }}
-                        onClick={() => updateSettings({ autoTagFromHashtags: !settings.autoTagFromHashtags })}
-                    >
-                        <span className="settings-row__label">본문 #해시태그 자동 추출</span>
-                        <span style={{ fontSize: "var(--font-size-l)" }}>
-                            {settings.autoTagFromHashtags ? "●" : "○"}
-                        </span>
-                    </div>
-                    <div style={{ padding: "0 0 8px", fontSize: "var(--font-size-xs)", color: "var(--text-secondary)" }}>
-                        문서에 #python #작업 등 해시태그를 쓰면 저장 시 자동으로 태그로 추가됩니다.
                     </div>
                 </div>
             </div>

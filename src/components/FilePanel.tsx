@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { FilePlus2, FileText, Search, Trash2, Square, CheckSquare, RotateCcw, Trash } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { feedback } from "../utils/feedback";
@@ -10,8 +11,8 @@ interface FilePanelProps {
 
 export function FilePanel({ onOpenDoc, onCreateDoc }: FilePanelProps) {
     const {
-        docs, current, tags, docTags, selectedFolder,
-        folders, loadDocs, loadAllTags, loadFolders,
+        docs, current, docTags, selectedFolder,
+        folders, loadDocs, loadFolders,
         renameDoc, deleteDoc, setDocFolder,
         trashItems, loadTrash, restoreFromTrash, deleteFromTrashPermanently,
     } = useStore();
@@ -29,9 +30,8 @@ export function FilePanel({ onOpenDoc, onCreateDoc }: FilePanelProps) {
 
     useEffect(() => {
         loadDocs();
-        loadAllTags();
         loadFolders();
-    }, [loadDocs, loadAllTags, loadFolders]);
+    }, [loadDocs, loadFolders]);
 
     useEffect(() => {
         if (selectedFolder === "__trash__") {
@@ -429,8 +429,9 @@ export function FilePanel({ onOpenDoc, onCreateDoc }: FilePanelProps) {
                 )}
             </div>
 
-            {ctxMenu && (
-                <div ref={menuRef} className="context-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+            {ctxMenu &&
+                createPortal(
+                    <div ref={menuRef} className="context-menu context-menu--portal" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
                     <button
                         className="context-menu__item"
                         onClick={() => {
@@ -510,32 +511,10 @@ export function FilePanel({ onOpenDoc, onCreateDoc }: FilePanelProps) {
                             폴더 이동: {folder}
                         </button>
                     ))}
-                </div>
-            )}
+                    </div>,
+                    document.body
+                )}
 
-            {/* Tag cloud */}
-            {tags.length > 0 && (
-                <div className="side-panel__tags" style={{ flexShrink: 0 }}>
-                    <div className="tree-section__header" style={{ marginTop: 4 }}>
-                        <span>태그</span>
-                    </div>
-                    <div style={{ padding: "4px 12px 8px", display: "flex", flexWrap: "wrap", gap: 4 }}>
-                        {tags.map((t) => (
-                            <span
-                                key={t}
-                                className="tag"
-                                style={{ cursor: "pointer" }}
-                                onClick={() => {
-                                    setSearchInput(t);
-                                    setAppliedSearch(t);
-                                }}
-                            >
-                                {t}
-                            </span>
-                        ))}
-                    </div>
-                </div>
-            )}
         </div>
     );
 }
