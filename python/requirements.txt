@@ -1,0 +1,12 @@
+fastapi
+python-multipart
+uvicorn[standard]
+chromadb
+sentence-transformers
+transformers
+torch
+networkx
+pywebview
+httpx
+pytest
+pytest-asyncio

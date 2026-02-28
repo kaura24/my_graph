@@ -1,0 +1,29 @@
+node_modules/
+dist/
+.vite/
+*.log
+
+# Python
+python/.venv/
+python/__pycache__/
+python/.pytest_cache/
+*.pyc
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local runtime data
+python/chroma_db/
+python/__pycache__/
+
+# Local debug artifacts
+openapi_*.json
+upload*_resp.json
+pw-*.png
+
+# Build artifacts
+python/build/
+python/dist/

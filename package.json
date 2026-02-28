@@ -1,0 +1,49 @@
+{
+  "name": "my-graph",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:frontend": "vite",
+    "dev:backend": "cd python && .venv/Scripts/python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000 --reload",
+    "dev": "vite",
+    "build": "vite build",
+    "build:desktop": "npm run build && cd python && python build_desktop.py",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tiptap/extension-image": "^2.11.5",
+    "@tiptap/extension-link": "^2.11.5",
+    "@tiptap/extension-placeholder": "^2.11.5",
+    "@tiptap/react": "^2.11.5",
+    "@tiptap/starter-kit": "^2.11.5",
+    "axios": "^1.12.2",
+    "flexsearch": "^0.8.212",
+    "graphology": "^0.26.0",
+    "html-to-text": "^9.0.5",
+    "lucide-react": "^0.575.0",
+    "markdown-it": "^14.1.0",
+    "openai": "^5.20.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^7.8.2",
+    "reactflow": "^11.11.4",
+    "turndown": "^7.2.1",
+    "xlsx": "^0.18.5",
+    "zod": "^3.25.76",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.2",
+    "eslint": "^9.35.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3"
+  }
+}
